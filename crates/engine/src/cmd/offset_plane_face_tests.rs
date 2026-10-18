@@ -80,3 +80,80 @@ fn offset_plane_rejects_bad_face_picks_without_panicking() {
         assert_eq!(s.doc.features.len(), features, "{base}");
     }
 }
+
+/// Distance from `p` to the plane.
+fn off(pl: &Plane, p: [f64; 3]) -> f64 {
+    (solidcraft_geom::Vec3::new(p[0], p[1], p[2]) - pl.origin).dot(pl.normal())
+}
+
+#[test]
+fn plane_at_angle_about_an_edge_follows_the_edge() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 40, "width": 30, "height": 20, "name": "Base"}));
+    run(&mut s, "construct.plane.offset", json!({"base": {"face": [5, 5, 20]}, "offset": 0, "name": "Lid"}));
+    // Hinged on the top edge along X at y = 30 (#2229).
+    run(&mut s, "construct.plane.at_angle", json!({"base": "Lid", "axis": {"edge": [20, 30, 20]}, "angle": "45 deg", "name": "Tilt"}));
+    let tilt = plane(&s, "Tilt");
+    let h = std::f64::consts::FRAC_1_SQRT_2;
+    assert!((tilt.normal().z.abs() - h).abs() < 1e-9 && (tilt.normal().y.abs() - h).abs() < 1e-9, "{tilt:?}");
+    for x in [0.0, 40.0] {
+        assert!(off(&tilt, [x, 30.0, 20.0]).abs() < 1e-9, "{tilt:?}");
+    }
+    // Kept as the edge, not a frozen line.
+    let feature = s.doc.find_feature("Tilt").unwrap();
+    let FeatureKind::ConstructionPlane { plane: PlaneRef::AtAngle { line, .. } } = &feature.kind else { panic!("plane at angle") };
+    assert!(matches!(line.as_deref(), Some(solidcraft_doc::construct::GeoRef::Edge { name: Some(_), .. })), "{line:?}");
+
+    // A taller, wider box moves the edge to y = 40, z = 30: the plane still holds it.
+    run(&mut s, "timeline.edit", json!({"feature": "Base", "set": {"height": "30", "width": "40"}}));
+    assert!(s.model.results.iter().all(|r| r.error.is_none()), "{:?}", s.model.results);
+    let tilt = plane(&s, "Tilt");
+    for x in [0.0, 40.0] {
+        assert!(off(&tilt, [x, 40.0, 30.0]).abs() < 1e-9, "{tilt:?}");
+    }
+
+    // Saved and reopened, it still resolves through the edge.
+    let reopened = Session::new(Document::from_json(&s.doc.to_json()).unwrap());
+    assert!(off(&plane(&reopened, "Tilt"), [20.0, 40.0, 30.0]).abs() < 1e-9);
+}
+
+#[test]
+fn plane_at_angle_about_a_sketch_line_or_construction_axis() {
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "Hinge"}));
+    run(&mut s, "sketch.line", json!({"points": [[0, 10], [40, 10]]}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "construct.plane.at_angle", json!({"base": "XY", "axis": {"sketch": "Hinge", "curve": "l1"}, "angle": 90, "name": "Up"}));
+    let up = plane(&s, "Up");
+    assert!(up.normal().y.abs() > 1.0 - 1e-9, "{up:?}");
+    assert!(off(&up, [0.0, 10.0, 0.0]).abs() < 1e-9, "{up:?}");
+
+    run(&mut s, "solid.box", json!({"length": 40, "width": 30, "height": 20}));
+    run(&mut s, "construct.axis.edge", json!({"edge": {"edge": [40, 15, 0]}, "name": "A1"}));
+    run(&mut s, "construct.plane.at_angle", json!({"base": "XY", "axis": "A1", "angle": 90, "name": "Side"}));
+    let side = plane(&s, "Side");
+    assert!(side.normal().x.abs() > 1.0 - 1e-9, "{side:?}");
+    assert!(off(&side, [40.0, 0.0, 0.0]).abs() < 1e-9, "{side:?}");
+}
+
+#[test]
+fn plane_at_angle_rejects_bad_axes_without_panicking() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 40, "width": 30, "height": 20}));
+    for axis in [
+        json!({"edge": [100, 100, 100]}),
+        json!({"edge": [1e300, 0, 0]}),
+        json!({"edge": [f64::MAX, 0, 0]}),
+        json!({"edge": [5, 5]}),
+        json!({"sketch": 999, "curve": "l1"}),
+        json!({"face": [5, 5, 20]}),
+        json!("NoSuchAxis"),
+        json!({}),
+        json!([1, 2, 3]),
+        json!({"origin": [0, 0, 0]}),
+    ] {
+        let features = s.doc.features.len();
+        assert!(s.execute("construct.plane.at_angle", &json!({"base": "XY", "axis": axis, "angle": 30})).is_err(), "{axis}");
+        assert_eq!(s.doc.features.len(), features, "{axis}");
+    }
+}

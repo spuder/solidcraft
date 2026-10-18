@@ -4549,11 +4549,12 @@ pub(crate) fn sheet_face_plane_in_frame(doc: &Document, st: &ModelState, comp: u
         PlaneRef::Offset { base, distance } => {
             PlaneRef::Offset { base: Box::new(sheet_face_plane_in_frame(doc, st, comp, base)?), distance: distance.clone() }
         }
-        PlaneRef::AtAngle { base, axis_origin, axis_dir, angle } => PlaneRef::AtAngle {
+        PlaneRef::AtAngle { base, axis_origin, axis_dir, angle, line } => PlaneRef::AtAngle {
             base: Box::new(sheet_face_plane_in_frame(doc, st, comp, base)?),
             axis_origin: *axis_origin,
             axis_dir: *axis_dir,
             angle: angle.clone(),
+            line: line.clone(),
         },
         PlaneRef::Flipped { base, about_y } => {
             PlaneRef::Flipped { base: Box::new(sheet_face_plane_in_frame(doc, st, comp, base)?), about_y: *about_y }
@@ -5472,6 +5473,7 @@ fn construction_state<'a>(doc: &Document, st: &'a ModelState, comp: u64) -> std:
 fn plane_is_fixed(plane: &PlaneRef) -> bool {
     match plane {
         PlaneRef::Origin { .. } | PlaneRef::Custom { .. } | PlaneRef::Placed { .. } => true,
+        PlaneRef::AtAngle { line: Some(_), .. } => false,
         PlaneRef::Offset { base, .. } | PlaneRef::AtAngle { base, .. } | PlaneRef::Flipped { base, .. } => plane_is_fixed(base),
         _ => false,
     }
@@ -5482,6 +5484,7 @@ fn plane_is_fixed(plane: &PlaneRef) -> bool {
 fn plane_reads_geometry(plane: &PlaneRef) -> bool {
     match plane {
         PlaneRef::Origin { .. } | PlaneRef::Custom { .. } | PlaneRef::Placed { .. } | PlaneRef::Construction { .. } => false,
+        PlaneRef::AtAngle { line: Some(_), .. } => true,
         PlaneRef::Offset { base, .. } | PlaneRef::AtAngle { base, .. } | PlaneRef::Flipped { base, .. } => plane_reads_geometry(base),
         PlaneRef::Midplane { .. }
         | PlaneRef::TwoEdges { .. }

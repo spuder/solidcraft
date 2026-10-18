@@ -534,7 +534,7 @@ impl Dialog {
             }
             "construct.plane.at_angle" => Dialog::new(
                 Kind::AnglePlane { angle: "45 deg".into() },
-                vec![SelInput::new("Plane", PLANES, false), SelInput::new("Axis", AXES, false)],
+                vec![SelInput::new("Plane", PLANES, false), SelInput::new("Axis", AXES | EDGES, false)],
             ),
             "solid.split_body" => Dialog::new(
                 Kind::Split,
@@ -1449,6 +1449,8 @@ fn hint(inp: &SelInput) -> &'static str {
     let a = inp.accept;
     if a & PROFILES != 0 {
         "click profiles in the view"
+    } else if a & (AXES | EDGES) == AXES | EDGES {
+        "click an axis, sketch line or straight edge"
     } else if a & EDGES != 0 {
         "click edges or faces"
     } else if a & PLANES != 0 {
@@ -4003,12 +4005,22 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
                 Some(Sel::Plane { name }) => name.clone(),
                 _ => return Err("pick an origin or construction plane".into()),
             };
+            // Edges and sketch lines go as references, so the plane follows them.
             let axis = match sels(d, 1).first() {
                 Some(Sel::Axis { name }) => json!(name),
-                Some(x) => {
-                    let (o, dir) = axis_of(app, x).ok_or("the axis must be an origin axis or a sketch line")?;
-                    json!({"origin": pt(o), "dir": pt(dir)})
+                // The saved edge of a plane being edited, until another is picked.
+                Some(Sel::Edge { body, point, .. }) if body.is_empty() => {
+                    d.extra.get("axis_ref").cloned().unwrap_or_else(|| json!({"edge": pt(*point)}))
                 }
+                Some(x @ Sel::Edge { point, .. }) => {
+                    axis_of(app, x).ok_or("the edge must be straight")?;
+                    json!({"edge": pt(*point)})
+                }
+                Some(Sel::SketchCurve { id }) => {
+                    let sketch = curves_sketch(app, std::slice::from_ref(id), None).ok_or("the axis must be a sketch line")?;
+                    json!({"sketch": sketch, "curve": id})
+                }
+                Some(_) => return Err("the axis must be an origin or construction axis, a sketch line or a straight edge".into()),
                 None => d.extra.get("axis").cloned().ok_or("pick an axis")?,
             };
             ("construct.plane.at_angle", json!({"base": base, "axis": axis, "angle": angle}))
@@ -5130,16 +5142,27 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             }
             d
         }
-        FeatureKind::ConstructionPlane { plane: PlaneRef::AtAngle { base, axis_origin, axis_dir, angle } } => {
+        FeatureKind::ConstructionPlane { plane: PlaneRef::AtAngle { base, axis_origin, axis_dir, angle, line } } => {
+            use solidcraft_engine::doc::construct::GeoRef;
             let mut d = start("construct.plane.at_angle")?;
             d.kind = Kind::AnglePlane { angle: angle.to_string() };
             if let Some(inp) = d.inputs.first_mut() {
                 inp.items = plane_sel(s, base).into_iter().collect();
             }
-            match world_axis(*axis_dir).filter(|_| axis_origin.len() < 1e-9) {
-                Some(name) => {
+            let picked = match line.as_deref() {
+                Some(GeoRef::Edge { at, name }) => {
+                    // Preserve the saved named reference until a replacement is picked.
+                    d.extra.insert("axis_ref".into(), json!({"type": "edge", "at": pt3(*at), "name": name}));
+                    Some(Sel::Edge { body: String::new(), index: 0, point: *at })
+                }
+                Some(GeoRef::SketchCurve { curve, .. }) => Some(Sel::SketchCurve { id: curve.clone() }),
+                Some(GeoRef::Axis { name }) | Some(GeoRef::World { axis: name }) => Some(Sel::Axis { name: name.clone() }),
+                _ => None,
+            };
+            match picked.or_else(|| world_axis(*axis_dir).filter(|_| axis_origin.len() < 1e-9).map(|name| Sel::Axis { name })) {
+                Some(item) => {
                     if let Some(inp) = d.inputs.get_mut(1) {
-                        inp.items = vec![Sel::Axis { name }];
+                        inp.items = vec![item];
                     }
                 }
                 None => {

@@ -96,7 +96,9 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("construct.plane.at_angle", "Plane at Angle", plane_angle)
         .at("SOLID", "CONSTRUCT")
         .icon("plane_angle")
-        .params("base: XY|XZ|YZ|plane name; axis: X|Y|Z|{origin, dir}; angle: expr; name?"),
+        .params(
+            "base: XY|XZ|YZ|plane name; axis: X|Y|Z|{origin, dir} (a fixed line), or a construction axis name, straight edge {edge: [x,y,z]} or sketch line {sketch, curve} that the plane follows; angle: expr; name?",
+        ),
     CommandSpec::new("solid.split_face", "Split Face", split_face)
         .at("SOLID", "MODIFY")
         .icon("split_face")
@@ -1532,13 +1534,31 @@ fn plane_offset(s: &mut Session, p: &Value) -> Result<Value> {
 fn plane_angle(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "construct.plane.at_angle";
     let base = plane_param(s, p.get("base"), cmd)?;
-    let (axis_origin, axis_dir) = axis_line(p, cmd)?;
+    let fixed = match p.get("axis") {
+        Some(Value::String(a)) => ["x", "y", "z"].contains(&a.to_ascii_lowercase().as_str()),
+        Some(Value::Object(o)) => o.contains_key("dir"),
+        _ => true,
+    };
+    let (axis_origin, axis_dir, line) = if fixed {
+        let (o, d) = axis_line(p, cmd)?;
+        (o, d, None)
+    } else {
+        // Model geometry (an edge, sketch line or construction axis): kept as a reference so the
+        // plane follows it, with where it is now alongside.
+        let axis = match p.get("axis") {
+            Some(Value::String(a)) => json!({ "axis": a }),
+            v => v.cloned().unwrap_or(Value::Null),
+        };
+        let g = super::construct::geo(s, Some(&axis), cmd, "axis")?;
+        let (o, d) = s.doc.resolve_line(&s.model.state(), &g).map_err(|e| bad(cmd, format!("`axis`: {e}")))?;
+        (o, d, Some(Box::new(g)))
+    };
     let angle = req_expr(cmd, p, "angle")?;
     check_expr(s, &angle, Kind::Angle, cmd, "angle")?;
     add_feature(
         s,
         p,
-        FeatureKind::ConstructionPlane { plane: solidcraft_doc::PlaneRef::AtAngle { base: Box::new(base), axis_origin, axis_dir, angle } },
+        FeatureKind::ConstructionPlane { plane: solidcraft_doc::PlaneRef::AtAngle { base: Box::new(base), axis_origin, axis_dir, angle, line } },
     )
 }
 

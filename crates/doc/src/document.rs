@@ -55,7 +55,17 @@ pub enum PlaneRef {
     /// Another plane offset along its normal by an expression.
     Offset { base: Box<PlaneRef>, distance: Expr },
     /// Another plane rotated about a line (in world coordinates) by an angle expression.
-    AtAngle { base: Box<PlaneRef>, axis_origin: Vec3, axis_dir: Vec3, angle: Expr },
+    AtAngle {
+        base: Box<PlaneRef>,
+        axis_origin: Vec3,
+        axis_dir: Vec3,
+        angle: Expr,
+        /// The axis as model geometry (a straight edge, sketch line or construction axis),
+        /// found again on every evaluation so the plane follows it; `axis_origin` and `axis_dir`
+        /// then keep where it was when picked. Absent: the fixed line `axis_origin`, `axis_dir`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        line: Option<Box<crate::construct::GeoRef>>,
+    },
     /// A construction plane feature (by name).
     Construction { name: FeatureName },
     /// `base` seen from its other side: the normal reversed by a half turn about the base's
@@ -3098,12 +3108,19 @@ impl Document {
                 let b = self.resolve_plane_in(vals, base, depth + 1, st)?;
                 Ok(b.offset(Self::eval_in(vals, distance, Kind::Length)?))
             }
-            PlaneRef::AtAngle { base, axis_origin, axis_dir, angle } => {
+            PlaneRef::AtAngle { base, axis_origin, axis_dir, angle, line } => {
                 let b = self.resolve_plane_in(vals, base, depth + 1, st)?;
                 let a = Self::eval_in(vals, angle, Kind::Angle)?;
+                let (axis_origin, axis_dir) = match line {
+                    Some(l) => {
+                        let st = st.ok_or_else(|| DocError::Invalid("this plane is built from the model: evaluate first".into()))?;
+                        crate::construct::line(&crate::construct::Ctx { doc: self, vals, st, depth }, l)?
+                    }
+                    None => (*axis_origin, *axis_dir),
+                };
                 let d = axis_dir.normalized().ok_or_else(|| DocError::Invalid("rotation axis".into()))?;
                 let rot = |v: Vec3| v * a.cos() + d.cross(v) * a.sin() + d * (d.dot(v) * (1.0 - a.cos()));
-                let o = *axis_origin + rot(b.origin - *axis_origin);
+                let o = axis_origin + rot(b.origin - axis_origin);
                 Plane::new(o, rot(b.x), rot(b.y)).ok_or_else(|| DocError::Invalid("degenerate plane".into()))
             }
             PlaneRef::Flipped { base, about_y } => Ok(self.resolve_plane_in(vals, base, depth + 1, st)?.flipped(*about_y)),

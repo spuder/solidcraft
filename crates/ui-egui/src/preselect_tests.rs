@@ -1717,3 +1717,42 @@ fn midplane_asks_for_two_planes_then_builds_the_one_between_them() {
     assert!(pl.normal().cross(Vec3::Z).len() < 1e-6, "{pl:?}");
     assert!((pl.origin.z - 10.0).abs() < 1e-6, "{pl:?}");
 }
+
+/// #2229: Plane at Angle takes a straight model edge as its axis (preselected or picked), saves
+/// it as the edge so the plane follows the model, and reopens with that edge.
+#[test]
+fn plane_at_angle_takes_a_straight_edge_as_its_axis() {
+    let mut app = app_with(json!([
+        {"command": "solid.box", "params": {"length": 40, "width": 30, "height": 20}},
+        {"command": "construct.plane.offset", "params": {"base": "XY", "offset": 20, "name": "Lid"}},
+    ]));
+    let top = Vec3::new(20.0, 30.0, 20.0);
+    let picked = edge(&app, top);
+    let d = start(&mut app, vec![Sel::Plane { name: "Lid".into() }, picked.clone()], "construct.plane.at_angle");
+    assert_eq!(d.inputs[1].items, vec![picked], "the edge goes to Axis");
+    let (cmd, p) = apply_commands(&app, &d).unwrap().remove(0);
+    assert_eq!(cmd, "construct.plane.at_angle");
+    assert_eq!(p["axis"], json!({"edge": [20.0, 30.0, 20.0]}));
+    app.session.execute(&cmd, &p).unwrap();
+    let feature = app.session.doc.features.last().unwrap().clone();
+
+    // Saved, reopened and accepted unchanged, it keeps the edge.
+    app.session = Session::new(solidcraft_engine::doc::Document::from_json(&app.session.doc.to_json()).unwrap());
+    let d = crate::dialogs::for_feature(&app, feature.id, None).unwrap();
+    assert!(matches!(d.inputs[1].items.as_slice(), [Sel::Edge { .. }]), "{:?}", d.inputs[1].items);
+    let (edit, p) = apply_commands(&app, &d).unwrap().remove(0);
+    assert_eq!(edit, "timeline.redefine");
+    app.session.execute(&edit, &p).unwrap();
+    assert_eq!(app.session.doc.feature(feature.id).unwrap().kind, feature.kind);
+
+    // A round edge has no single line to turn about.
+    app.session.execute("solid.cylinder", &json!({"center": [80, 0, 0], "radius": 5, "height": 10, "body_name": "Rod"})).unwrap();
+    let (i, rim) = {
+        let st = app.session.model.state();
+        let m = st.body("Rod").unwrap().mesh();
+        m.edges.iter().enumerate().find(|(_, e)| e.len() > 2).map(|(i, e)| (i, e[e.len() / 2])).unwrap()
+    };
+    let mut d = start(&mut app, vec![Sel::Plane { name: "Lid".into() }], "construct.plane.at_angle");
+    d.inputs[1].items = vec![Sel::Edge { body: "Rod".into(), index: i, point: rim }];
+    assert!(apply_commands(&app, &d).is_err());
+}

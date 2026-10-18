@@ -295,6 +295,14 @@ pub(crate) fn line(ctx: &Ctx, g: &GeoRef) -> Result<(Vec3, Vec3)> {
     }
 }
 
+impl Document {
+    /// A reference as a line (a point on it, unit direction) in the evaluated model `st`.
+    pub fn resolve_line(&self, st: &ModelState, g: &GeoRef) -> Result<(Vec3, Vec3)> {
+        let vals = self.param_values().0;
+        line(&Ctx { doc: self, vals: &vals, st, depth: 0 }, g)
+    }
+}
+
 /// A reference as a plane.
 pub(crate) fn plane(ctx: &Ctx, g: &GeoRef) -> Result<Plane> {
     match g {
@@ -633,7 +641,12 @@ impl PlaneRef {
             PlaneRef::ThreePoints { a, b, c } => vec![a.as_mut(), b.as_mut(), c.as_mut()],
             PlaneRef::Tangent { face, .. } => vec![face.as_mut()],
             PlaneRef::AlongPath { path, .. } => vec![path.as_mut()],
-            PlaneRef::Offset { base, .. } | PlaneRef::AtAngle { base, .. } | PlaneRef::Flipped { base, .. } => base.refs_mut(),
+            PlaneRef::AtAngle { base, line, .. } => {
+                let mut refs = base.refs_mut();
+                refs.extend(line.as_deref_mut());
+                refs
+            }
+            PlaneRef::Offset { base, .. } | PlaneRef::Flipped { base, .. } => base.refs_mut(),
             _ => Vec::new(),
         }
     }
