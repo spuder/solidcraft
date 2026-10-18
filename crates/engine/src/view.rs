@@ -593,6 +593,18 @@ pub fn construction_planes(s: &Session) -> Vec<(u64, String, Plane)> {
         .collect()
 }
 
+/// Where a construction plane is drawn: the point it was picked at, moved onto the plane, else
+/// its origin (which, for a plane on a face, is the face's own and can lie off the part).
+pub fn construction_plane_centre(s: &Session, feature: u64, plane: &Plane) -> Vec3 {
+    let picked = match s.doc.feature(feature).map(|f| (&f.kind, f.component)) {
+        Some((solidcraft_doc::FeatureKind::ConstructionPlane { plane: p }, component)) => {
+            p.picked_point().map(|at| solidcraft_doc::apply_point(&s.doc.component_transform(component), at))
+        }
+        _ => None,
+    };
+    picked.map(|at| plane.to_world(plane.to_local(at))).filter(|c| c.is_finite()).unwrap_or(plane.origin)
+}
+
 /// Construction axes, as evaluated: (feature id, name, origin, unit direction).
 pub fn construction_axes(s: &Session) -> Vec<(u64, String, Vec3, Vec3)> {
     constructs(s)

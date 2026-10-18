@@ -357,7 +357,7 @@ pub fn compute(s: &Session, cmds: &[(String, Value)], colors: Colors) -> Job {
     }) {
         let preview = s.preview_visible_world(cmds).map_err(|error| error.to_string())?;
         return std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let mut built = build(&preview.before, &preview.after, colors);
+            let mut built = build_at(&preview.before, &preview.after, colors, picked(cmds));
             built.bounds = state_bounds(&preview.after);
             built
         }))
@@ -377,7 +377,7 @@ pub fn compute(s: &Session, cmds: &[(String, Value)], colors: Colors) -> Job {
             let p = s.preview(cmds).map_err(|e| e.to_string())?;
             let guard =
                 |f: &dyn Fn() -> Built| std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).map_err(|_| "the preview failed".to_string());
-            let mut b = guard(&|| build(&p.before, &p.after, colors))?;
+            let mut b = guard(&|| build_at(&p.before, &p.after, colors, picked(cmds)))?;
             b.bounds = state_bounds(&p.after);
             // The radius a previewed fillet used when it reduced the one asked for (a new
             // fillet or an edited one: the feature the replies name).
@@ -519,9 +519,26 @@ fn same(a: &Mesh, b: &Mesh) -> bool {
     a.triangles.len() == b.triangles.len() && a.positions == b.positions
 }
 
+/// Where a previewed construction plane was picked: the face of an offset plane, the edge a
+/// plane at an angle turns about. Drawn there, as the viewport draws it once made.
+fn picked(cmds: &[(String, Value)]) -> Option<solidcraft_engine::geom::Vec3> {
+    cmds.iter().rev().find_map(|(_, p)| {
+        let p = p.get("params").filter(|_| p.get("command").is_some()).unwrap_or(p);
+        [p.get("axis").and_then(|a| a.get("edge")), p.get("base").and_then(|b| b.get("face"))]
+            .into_iter()
+            .flatten()
+            .find_map(solidcraft_engine::params::vec3)
+    })
+}
+
 /// The preview scene: changed and new bodies (new surface tinted) and, as a ghost, the old
 /// version of changed or removed bodies.
 pub fn build(before: &ModelState, after: &ModelState, c: Colors) -> Built {
+    build_at(before, after, c, None)
+}
+
+/// [`build`], drawing new construction planes around `picked` (moved onto each), not their origin.
+fn build_at(before: &ModelState, after: &ModelState, c: Colors, picked: Option<solidcraft_engine::geom::Vec3>) -> Built {
     let mut sc = GpuScene::default();
     let mut replaced = Vec::new();
     for construct in &after.construct {
@@ -529,7 +546,8 @@ pub fn build(before: &ModelState, after: &ModelState, c: Colors) -> Built {
             continue;
         }
         if let solidcraft_engine::doc::construct::ConstructGeom::Plane(plane) = construct.geom {
-            let (o, x, y) = (plane.origin, plane.x * 10.0, plane.y * 10.0);
+            let o = picked.map(|at| plane.to_world(plane.to_local(at))).filter(|o| o.is_finite()).unwrap_or(plane.origin);
+            let (x, y) = (plane.x * 10.0, plane.y * 10.0);
             let quad = [o - x - y, o + x - y, o + x + y, o - x + y];
             let color = [c.added[0], c.added[1], c.added[2], 64];
             for triangle in [[quad[0], quad[1], quad[2]], [quad[0], quad[2], quad[3]]] {

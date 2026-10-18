@@ -657,6 +657,24 @@ impl PlaneRef {
         }
     }
 
+    /// Where the plane was picked (a point on its face, or on the edge it turns about), if
+    /// anywhere: the place to draw it. Its origin can be far from that (a face's own origin).
+    pub fn picked_point(&self) -> Option<Vec3> {
+        let mut p = self;
+        for _ in 0..64 {
+            match p {
+                PlaneRef::Face { at, .. } => return Some(*at),
+                PlaneRef::AtAngle { line: Some(l), base, .. } => match l.as_ref() {
+                    GeoRef::Edge { at, .. } => return Some(*at),
+                    _ => p = base,
+                },
+                PlaneRef::Offset { base, .. } | PlaneRef::AtAngle { base, .. } | PlaneRef::Flipped { base, .. } => p = base,
+                _ => return None,
+            }
+        }
+        None
+    }
+
     /// Does resolving it need the model (edges, faces, construction axes and points)?
     pub fn needs_model(&self) -> bool {
         let mut k = self.clone();

@@ -980,14 +980,15 @@ pub fn construction_points(app: &SolveApp) -> Vec<(String, Vec3)> {
         .collect()
 }
 
-/// Construction planes drawn as squares around their origin: (name, normal, quad).
+/// Construction planes drawn as squares around where they were picked (else their origin):
+/// (name, normal, quad).
 pub fn construction_quads(app: &SolveApp) -> Vec<(String, Vec3, [Vec3; 4])> {
     let h = origin_size(app.cam.half_height()) * 1.2;
     solidcraft_engine::view::construction_planes(&app.session)
         .into_iter()
         .filter(|(_, n, _)| !app.session.visibility.hidden_origin.contains(n))
-        .map(|(_, name, pl)| {
-            let (o, x, y) = (pl.origin, pl.x * h, pl.y * h);
+        .map(|(id, name, pl)| {
+            let (o, x, y) = (solidcraft_engine::view::construction_plane_centre(&app.session, id, &pl), pl.x * h, pl.y * h);
             (name, pl.normal(), [o - x - y, o + x - y, o + x + y, o - x + y])
         })
         .collect()

@@ -177,3 +177,22 @@ fn plane_at_angle_rejects_bad_axes_without_panicking() {
         assert_eq!(s.doc.features.len(), features, "{axis}");
     }
 }
+
+/// A plane on a face is drawn where the face was picked (moved onto the plane), not around the
+/// face's own origin, which can lie off the part: Enter used to make it jump away (#2229).
+#[test]
+fn construction_planes_are_drawn_where_they_were_picked() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"corner": [100, 50, 0], "length": 40, "width": 30, "height": 20}));
+    run(&mut s, "construct.plane.offset", json!({"base": {"face": [135, 75, 20]}, "offset": 10, "name": "Above"}));
+    run(&mut s, "construct.plane.at_angle", json!({"base": "Above", "axis": {"edge": [120, 50, 20]}, "angle": 45, "name": "Tilt"}));
+    let centre = |s: &Session, name: &str| {
+        let (id, _, pl) = crate::view::construction_planes(s).into_iter().find(|p| p.1 == name).unwrap();
+        crate::view::construction_plane_centre(s, id, &pl)
+    };
+    assert!(centre(&s, "Above").dist(solidcraft_geom::Vec3::new(135.0, 75.0, 30.0)) < 1e-9, "{:?}", centre(&s, "Above"));
+    assert!(centre(&s, "Tilt").dist(solidcraft_geom::Vec3::new(120.0, 50.0, 20.0)) < 1e-9, "{:?}", centre(&s, "Tilt"));
+    // An origin plane offset by numbers has nothing picked: around its origin.
+    run(&mut s, "construct.plane.offset", json!({"base": "XY", "offset": 5, "name": "Shelf"}));
+    assert!(centre(&s, "Shelf").dist(solidcraft_geom::Vec3::new(0.0, 0.0, 5.0)) < 1e-9);
+}
