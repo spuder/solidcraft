@@ -352,8 +352,8 @@ fn spawn(pv: &mut PreviewState, key: u64, scratch: Session, cmds: Vec<(String, V
 pub fn compute(s: &Session, cmds: &[(String, Value)], colors: Colors) -> Job {
     if cmds.iter().any(|(command, params)| {
         matches!(command.as_str(), "sketch.redefine" | "sketch.mirror" | "sketch.pattern.rectangular" | "sketch.pattern.circular" | "sketch.offset")
-            || command == "construct.plane.along_path"
-            || params.get("command").and_then(Value::as_str) == Some("construct.plane.along_path")
+            || matches!(command.as_str(), "construct.plane.along_path" | "construct.plane.at_angle")
+            || matches!(params.get("command").and_then(Value::as_str), Some("construct.plane.along_path" | "construct.plane.at_angle"))
     }) {
         let preview = s.preview_visible_world(cmds).map_err(|error| error.to_string())?;
         return std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {

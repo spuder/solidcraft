@@ -61,8 +61,10 @@ pub enum PlaneRef {
         axis_dir: Vec3,
         angle: Expr,
         /// The axis as model geometry (a straight edge, sketch line or construction axis),
-        /// found again on every evaluation so the plane follows it; `axis_origin` and `axis_dir`
-        /// then keep where it was when picked. Absent: the fixed line `axis_origin`, `axis_dir`.
+        /// found again on every evaluation so the plane follows it. The plane then goes through
+        /// it, at `angle` to `base` (the line must run parallel to `base`); `axis_origin` and
+        /// `axis_dir` keep where it was when picked. Absent: `base` turned about the fixed line
+        /// `axis_origin`, `axis_dir`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         line: Option<Box<crate::construct::GeoRef>>,
     },
@@ -3111,12 +3113,21 @@ impl Document {
             PlaneRef::AtAngle { base, axis_origin, axis_dir, angle, line } => {
                 let b = self.resolve_plane_in(vals, base, depth + 1, st)?;
                 let a = Self::eval_in(vals, angle, Kind::Angle)?;
-                let (axis_origin, axis_dir) = match line {
+                let (b, axis_origin, axis_dir) = match line {
+                    // Through the line, at the angle to the base: the base is first moved along
+                    // its normal onto the line, which has to run parallel to it.
                     Some(l) => {
                         let st = st.ok_or_else(|| DocError::Invalid("this plane is built from the model: evaluate first".into()))?;
-                        crate::construct::line(&crate::construct::Ctx { doc: self, vals, st, depth }, l)?
+                        let (o, d) = crate::construct::line(&crate::construct::Ctx { doc: self, vals, st, depth }, l)?;
+                        let n = b.normal();
+                        if d.dot(n).abs() > 1e-6 {
+                            return Err(DocError::Invalid("the axis must run parallel to the plane".into()));
+                        }
+                        let onto =
+                            Plane::new(b.origin + n * (o - b.origin).dot(n), b.x, b.y).ok_or_else(|| DocError::Invalid("degenerate plane".into()))?;
+                        (onto, o, d)
                     }
-                    None => (*axis_origin, *axis_dir),
+                    None => (b, *axis_origin, *axis_dir),
                 };
                 let d = axis_dir.normalized().ok_or_else(|| DocError::Invalid("rotation axis".into()))?;
                 let rot = |v: Vec3| v * a.cos() + d.cross(v) * a.sin() + d * (d.dot(v) * (1.0 - a.cos()));

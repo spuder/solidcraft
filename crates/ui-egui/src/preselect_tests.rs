@@ -1719,12 +1719,13 @@ fn midplane_asks_for_two_planes_then_builds_the_one_between_them() {
 }
 
 /// #2229: Plane at Angle takes a straight model edge as its axis (preselected or picked), saves
-/// it as the edge so the plane follows the model, and reopens with that edge.
+/// it as the edge so the plane follows the model, and reopens with that edge. The base plane is
+/// 10 mm above the edge: the preview and the plane go through the edge all the same.
 #[test]
 fn plane_at_angle_takes_a_straight_edge_as_its_axis() {
     let mut app = app_with(json!([
         {"command": "solid.box", "params": {"length": 40, "width": 30, "height": 20}},
-        {"command": "construct.plane.offset", "params": {"base": "XY", "offset": 20, "name": "Lid"}},
+        {"command": "construct.plane.offset", "params": {"base": "XY", "offset": 30, "name": "Lid"}},
     ]));
     let top = Vec3::new(20.0, 30.0, 20.0);
     let picked = edge(&app, top);
@@ -1733,8 +1734,20 @@ fn plane_at_angle_takes_a_straight_edge_as_its_axis() {
     let (cmd, p) = apply_commands(&app, &d).unwrap().remove(0);
     assert_eq!(cmd, "construct.plane.at_angle");
     assert_eq!(p["axis"], json!({"edge": [20.0, 30.0, 20.0]}));
+    let through_edge = |pl: &solidcraft_engine::geom::Plane| {
+        let h = std::f64::consts::FRAC_1_SQRT_2;
+        [0.0, 40.0].iter().all(|x| (Vec3::new(*x, 30.0, 20.0) - pl.origin).dot(pl.normal()).abs() < 1e-6) && (pl.normal().z.abs() - h).abs() < 1e-6
+    };
+    let commands = vec![(cmd.clone(), p.clone())];
+    let preview = app.session.preview_visible_world(&commands).unwrap();
+    let solidcraft_engine::doc::construct::ConstructGeom::Plane(pl) = preview.after.construct.last().unwrap().geom else { panic!("plane") };
+    assert!(through_edge(&pl), "the preview: {pl:?}");
+    let built = crate::preview::compute(&app.session, &commands, crate::preview::Colors::from_tokens(&crate::theme::Tokens::dark())).unwrap();
+    assert!(!built.scene.xray.is_empty(), "the preview draws the plane");
     app.session.execute(&cmd, &p).unwrap();
     let feature = app.session.doc.features.last().unwrap().clone();
+    let (_, _, pl) = solidcraft_engine::view::construction_planes(&app.session).into_iter().find(|p| p.0 == feature.id).unwrap();
+    assert!(through_edge(&pl), "the plane: {pl:?}");
 
     // Saved, reopened and accepted unchanged, it keeps the edge.
     app.session = Session::new(solidcraft_engine::doc::Document::from_json(&app.session.doc.to_json()).unwrap());

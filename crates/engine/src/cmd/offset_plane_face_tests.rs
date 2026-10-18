@@ -136,6 +136,26 @@ fn plane_at_angle_about_a_sketch_line_or_construction_axis() {
     assert!(off(&side, [40.0, 0.0, 0.0]).abs() < 1e-9, "{side:?}");
 }
 
+/// The base plane 10 mm above the edge: the plane still goes through the edge, at the angle to
+/// the base; an axis that crosses the base plane has no such plane.
+#[test]
+fn plane_at_angle_about_an_edge_goes_through_it_from_a_plane_above() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 40, "width": 30, "height": 20}));
+    run(&mut s, "construct.plane.offset", json!({"base": "XY", "offset": 30, "name": "Above"}));
+    run(&mut s, "construct.plane.at_angle", json!({"base": "Above", "axis": {"edge": [20, 0, 20]}, "angle": 30, "name": "Tilt"}));
+    let tilt = plane(&s, "Tilt");
+    for x in [0.0, 40.0] {
+        assert!(off(&tilt, [x, 0.0, 20.0]).abs() < 1e-9, "{tilt:?}");
+    }
+    assert!((tilt.normal().z.abs() - 30f64.to_radians().cos()).abs() < 1e-9, "{tilt:?}");
+
+    let features = s.doc.features.len();
+    let err = s.execute("construct.plane.at_angle", &json!({"base": "Above", "axis": {"edge": [40, 0, 10]}, "angle": 30})).unwrap_err();
+    assert!(err.to_string().contains("parallel"), "{err}");
+    assert_eq!(s.doc.features.len(), features);
+}
+
 #[test]
 fn plane_at_angle_rejects_bad_axes_without_panicking() {
     let mut s = Session::default();
