@@ -6,6 +6,7 @@
 mod app_icons;
 mod assets;
 mod book;
+mod dmg_layout;
 mod features;
 mod i18n;
 mod icons;
@@ -27,6 +28,8 @@ commands:
   assets          check that every non-code asset file is attributed in ATTRIBUTION.md
   app-icons       regenerate shared app-icon exports for Linux, FreeBSD and Windows
   icons           validate UI icon standards, discovery and review-tool behavior (Python 3.11+)
+  dmg-layout DIR  write DIR/.DS_Store, the Finder window of the macOS disk image: the background with
+                  its arrow and the icon positions (packaging/macos/package.sh)
   features        list SolidCraft's commands by area in docs/features.md (from the registry)
   i18n [--check | --add-missing]
                   report how complete the message catalogs in assets/locales are:
@@ -84,6 +87,7 @@ fn main() -> ExitCode {
             let arg = |name: &str| rest.iter().position(|a| *a == name).and_then(|i| rest.get(i + 1)).copied();
             cmd_action_matrix(rest.contains(&"--bless"), arg("--results"), arg("--from"))
         }
+        Some("dmg-layout") => dmg_layout::run(&rest),
         Some("book") => book::run(&root(), !rest.contains(&"--no-build")),
         Some("licences") => licences::run(&root(), rest.contains(&"--check")),
         Some("lists") => lists::run(&root(), rest.contains(&"--fix")),

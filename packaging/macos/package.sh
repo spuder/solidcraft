@@ -82,32 +82,22 @@ test -x "$APP/Contents/MacOS/solidcraft-cli" || { echo "solidcraft-cli is missin
 
 # ---- DMG ---------------------------------------------------------------------------------------
 echo "==> building $DMG"
-# dmgbuild (MIT, hash-pinned in requirements.txt) lays out the window: the background with its
-# arrow (assets/platforms/macos/dmg-background.png and @2x), SolidCraft.app on the left and
-# Applications on the right (dmg-settings.py). It writes the Finder layout itself, so it needs no
-# Finder or AppleScript and runs on CI. It needs Python 3.10 or newer.
-PY="${PYTHON:-python3}"
-"$PY" -c 'import sys; sys.exit(sys.version_info < (3, 10))' || {
-  echo "dmgbuild needs Python 3.10 or newer; set PYTHON=/path/to/python3.x" >&2
-  exit 1
-}
-"$PY" -m venv "$WORK/venv"
-"$WORK/venv/bin/pip" install --quiet --disable-pip-version-check --require-hashes --only-binary :all: \
-  -r "$ROOT/packaging/macos/requirements.txt"
-rm -f "$DMG"
-# dmgbuild attaches a scratch image while it writes. Attaching is sometimes flaky on CI runners
-# ("Resource busy"), so try a few times before giving up.
-for attempt in 1 2 3; do
-  if "$WORK/venv/bin/dmgbuild" -s "$ROOT/packaging/macos/dmg-settings.py" \
-    -D app="$APP" -D background="$ROOT/assets/platforms/macos/dmg-background.png" \
-    "SolidCraft" "$DMG"; then
-    break
-  fi
-  rm -f "$DMG"
-  [ "$attempt" = 3 ] && { echo "dmgbuild failed 3 times" >&2; exit 1; }
-  echo "dmgbuild failed (attempt $attempt); retrying" >&2
-  sleep 10
-done
+STAGE="$WORK/dmg"
+mkdir -p "$STAGE"
+ditto "$APP" "$STAGE/SolidCraft.app"
+ln -s /Applications "$STAGE/Applications"
+# The window: the background with its arrow (assets/platforms/macos/dmg-background.png and @2x, in
+# one HiDPI TIFF) and Finder's layout file with SolidCraft.app on the left and Applications on the
+# right (xtask/src/dmg_layout.rs, which also has the volume name used below).
+tiffutil -cathidpicheck "$ROOT/assets/platforms/macos/dmg-background.png" \
+  "$ROOT/assets/platforms/macos/dmg-background@2x.png" -out "$STAGE/.background.tiff"
+(cd "$ROOT" && cargo run --locked --quiet -p xtask -- dmg-layout "$STAGE")
+rm -f "$DMG" "$WORK/raw.dmg"
+# makehybrid + convert builds the image without attaching a device, unlike `create -srcfolder`,
+# which is flaky on CI runners ("Resource busy").
+hdiutil makehybrid -hfs -hfs-volume-name "SolidCraft" -hfs-openfolder "$STAGE" -o "$WORK/raw.dmg" "$STAGE"
+hdiutil convert "$WORK/raw.dmg" -format UDZO -imagekey zlib-level=9 -o "$DMG"
+rm -f "$WORK/raw.dmg"
 
 # Check the image as a user gets it: mount it and look inside.
 MNT="$(mktemp -d)"
@@ -135,7 +125,12 @@ test -s "$MNT/SolidCraft.app/Contents/Resources/Licenses/THIRD-PARTY-LICENSES.tx
 # Not --strict: the mounted HFS volume adds Finder info, which strict verification rejects.
 codesign --verify --deep --verbose=2 "$MNT/SolidCraft.app"
 "$MNT/SolidCraft.app/Contents/MacOS/SolidCraft" --version
-hdiutil detach "$MNT"
+# The volume can stay busy for a moment after the checks ("Resource busy"), so wait and retry.
+for attempt in 1 2 3 4 5; do
+  hdiutil detach "$MNT" && break
+  [ "$attempt" = 5 ] && { echo "could not detach $MNT" >&2; exit 1; }
+  sleep 2
+done
 
 # ---- CLI ---------------------------------------------------------------------------------------
 echo "==> building $CLI_ZIP"
